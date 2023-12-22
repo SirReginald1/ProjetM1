@@ -1,0 +1,494 @@
+---
+title: "Test"
+author: "Andrew Hardwick"
+format: html
+editor: source
+---
+
+```{r}
+# create table to auto update computing
+library(caret)
+library(ggplot2)
+```
+
+3h prog + sum of calc time
+
+## Testing script
+
+```{r, warning=FALSE, message=FALSE}
+# Set number of variable list (used to call )
+newas = c(10, 20, 30, 50, 100, 200, 300, 500, 1000, 2000, 3000, 5000, 10000)
+
+# Set random forest parameters
+set.seed(1)
+control = caret::trainControl(method='repeatedcv')#, number=3, repeats=3)
+#mtry = sqrt(ncol(train)-1)
+#tunegrid = expand.grid(.mtry=mtry)
+
+# Load test set
+test = readRDS("df_preproc_test.rds")
+
+# Set the number of n to test
+N = c(10, 20, 30, 50, 100, 200, 300, 500, 1000, 1600)
+
+# Final output
+out = list()
+# The N sequence to use as reference 
+out[["n"]] = N
+
+# The list of tested newas
+#out[["newas"]] = newas
+
+# Run through list of newas
+for(i in newas[13:length(newas)]){
+  # Load training set
+  train = readRDS(paste0("df_newas", i, "_train.rds"))
+  
+  #rownames(out) = N
+  res_pred_train = c()
+  res_pred_test = c()
+  res_time = c()
+
+  # Run through all the N's
+  for(n in N){
+    print(n)
+    # Selecting sample
+    set.seed(1)
+    sample_train = train[sample(n),]
+    
+    # Seting parameters based on sample size
+    mtry = sqrt(ncol(sample_train)-1)
+    tunegrid = expand.grid(.mtry=mtry)
+    
+    # Run model
+    start_time = Sys.time()
+    rf = caret::train(meth_class~., 
+      	                  data=sample_train, 
+          	              method='rf', 
+          	              metric='Accuracy', 
+          	              tuneGrid=tunegrid, 
+          	              trControl=control)
+    end_time = Sys.time()
+    
+    model_file_name = paste0(c("rf_newas", i, "_n", n), collapse = "")
+    
+    saveRDS(rf, paste0(c("Output/", model_file_name, ".rds"), collapse = ""))
+    
+    # Predict values
+    pred_train = as.character(predict(rf, newdata=train, nodes=TRUE))
+    pred_test = as.character(predict(rf, newdata=test, nodes=TRUE))
+    
+    
+    # Putting all results in result vectors
+    temp = pred_train == train$meth_class
+    res_pred_train = c(res_pred_train, sum(temp)*100/length(temp))
+    
+    temp = pred_test == test$meth_class
+    res_pred_test = c(res_pred_test, sum(temp)*100/length(temp))
+    
+    res_time = c(res_time, difftime(end_time, start_time, units = "secs"))
+    
+  }
+  
+  
+  
+  # Put all results in list with newas as reference
+  out[[as.character(i)]] = list("acc_train" = res_pred_train, "acc_test" = res_pred_test, "time" = res_time)
+    
+  
+  
+  #saveRDS(out,"Output/res.rds")
+}
+
+```
+## Conversion to data frame function
+
+```{r, plot_function}
+#' Takes object outputed by test script and transforms it to data frame. Intended to be used for ggplot.
+#' 
+#' @param res_obj Object outputed by the test script.
+#' @param include_n Boolean indicating if the n's should be included as a column.
+#' @return A list of lists containing all the testing measurements.
+res_to_df = function(res_obj, include_n = TRUE){
+  # Define matrix of appropriate dimentions
+  df_out = matrix(ncol = length(names(res_obj[[2]])) * (length(names(res_obj)) - 1), nrow = length(res_obj[[1]]))
+  
+  # Output columne df index
+  col_idx = 1
+  
+  # Vector of column names
+  col_names = c()
+  
+  # Run through the number of variables list names
+  for(newas in attributes(res_obj)[[1]][-1]){
+    
+    # Run through the list of metric names
+    for(c in names(res_obj[[2]])){
+      # Place each newas vector in df_out column
+      df_out[,col_idx] = unlist(out[[newas]][c])
+      col_idx = col_idx + 1
+      
+      # Create the column name
+      col_names = c(col_names, paste(newas, c, sep = "_"))
+    }
+  }
+  # Format and name output df
+  df_out = as.data.frame(df_out)
+  rownames(df_out) = res_obj[["n"]]
+  colnames(df_out) = col_names
+  
+  if(include_n){
+    df_out$n = res_obj$n
+  }
+  
+  return(df_out)
+}
+
+```
+
+## Ploting test
+```{r}
+colour = colorRampPalette(c("#1b98e0", "red"))(9)
+temp = ggplot(res_to_df(out), aes(n,!!sym("10_acc_train"), color = "10"))+geom_line() 
+  temp = temp + geom_line(aes(n, `20_acc_train`, color = "20"))
+  temp = temp + geom_line(aes(n, `30_acc_train`, color = "30"))
+  temp = temp + geom_line(aes(n, `50_acc_train`, color = "50"))
+  temp = temp + geom_line(aes(n, `100_acc_train`, color = "100"))
+  temp = temp + geom_line(aes(n, `200_acc_train`, color = "200"))
+  temp = temp + geom_line(aes(n, `300_acc_train`, color = "300"))
+  temp = temp + geom_line(aes(n, `500_acc_train`, color = "500"))
+  temp = temp + geom_line(aes(n, `1000_acc_train`, color = "1000"))
+  temp = temp + labs(title = "Training set accuracy", x = "Number of observations", y = "Accuracy in %")
+  temp = temp + scale_color_manual(name = "Number of varables", breaks = rev(c("10","20", "30", "50", "100", "200", "300", "500", "1000")),values = rev(c("10"=colour[1], "20"=colour[2], "30"=colour[3], "50"=colour[4], "100"=colour[5], "200"=colour[6], "300"=colour[7], "500"=colour[8], "1000"=colour[9])))
+  
+temp
+```
+
+```{r}
+#temp = res_to_df(out)
+#temp$n = out$n
+colour = colorRampPalette(c("#1b98e0", "red"))(13)
+ggplot(res_to_df(out), aes(n,!!sym("10_acc_train"), color = "10"))+
+  geom_line() + 
+  geom_line(aes(n, `20_acc_train`, color = "20")) +
+  geom_line(aes(n, `30_acc_train`, color = "30")) +
+  geom_line(aes(n, `50_acc_train`, color = "50")) +
+  geom_line(aes(n, `100_acc_train`, color = "100")) +
+  geom_line(aes(n, `200_acc_train`, color = "200")) +
+  geom_line(aes(n, `300_acc_train`, color = "300")) +
+  geom_line(aes(n, `500_acc_train`, color = "500")) +
+  geom_line(aes(n, `1000_acc_train`, color = "1000")) +
+  geom_line(aes(n, `2000_acc_train`, color = "2000")) +
+  geom_line(aes(n, `3000_acc_train`, color = "3000")) +
+  geom_line(aes(n, `5000_acc_train`, color = "5000")) +
+  geom_line(aes(n, `5000_acc_train`, color = "10000")) +
+  labs(title = "Training set accuracy", x = "Number of observations", y = "Accuracy in %") +
+  scale_color_manual(name = "Number of\nvarables", breaks = rev(c("10","20", "30", "50", "100", "200", "300", "500", "1000", "2000", "3000", "5000", "10000")),values = rev(c("10"=colour[1], "20"=colour[2], "30"=colour[3], "50"=colour[4], "100"=colour[5], "200"=colour[6], "300"=colour[7], "500"=colour[8], "1000"=colour[9], "2000"=colour[10], "3000"=colour[11], "5000"=colour[12], "10000"=colour[13])))
+  
+```
+```{r}
+
+
+#temp = res_to_df(out)
+#temp$n = out$n
+colour = colorRampPalette(c("#1b98e0", "red"))(13)
+ggplot(res_to_df(out), aes(n,!!sym("10_acc_test"), color = "10"))+
+  geom_line() + 
+  geom_line(aes(n, `20_acc_test`, color = "20")) +
+  geom_line(aes(n, `30_acc_test`, color = "30")) +
+  geom_line(aes(n, `50_acc_test`, color = "50")) +
+  geom_line(aes(n, `100_acc_test`, color = "100")) +
+  geom_line(aes(n, `200_acc_test`, color = "200")) +
+  geom_line(aes(n, `300_acc_test`, color = "300")) +
+  geom_line(aes(n, `500_acc_test`, color = "500")) +
+  geom_line(aes(n, `1000_acc_test`, color = "1000")) +
+  geom_line(aes(n, `2000_acc_test`, color = "2000")) +
+  geom_line(aes(n, `3000_acc_test`, color = "3000")) +
+  geom_line(aes(n, `5000_acc_test`, color = "5000")) +
+  geom_line(aes(n, `5000_acc_test`, color = "10000")) +
+  labs(title = "Testing set accuracy", x = "Number of observations", y = "Accuracy in %") +
+  scale_color_manual(name = "Number of\nvarables", breaks = rev(c("10","20", "30", "50", "100", "200", "300", "500", "1000", "2000", "3000", "5000", "10000")),values = rev(c("10"=colour[1], "20"=colour[2], "30"=colour[3], "50"=colour[4], "100"=colour[5], "200"=colour[6], "300"=colour[7], "500"=colour[8], "1000"=colour[9], "2000"=colour[10], "3000"=colour[11], "5000"=colour[12], "10000"=colour[13])))
+  
+```
+```{r}
+colour = colorRampPalette(c("#1b98e0", "red"))(13)
+ggplot(res_to_df(out), aes(n,!!sym("10_time"), color = "10"))+
+  geom_line() + 
+  geom_line(aes(n, `20_time`, color = "20")) +
+  geom_line(aes(n, `30_time`, color = "30")) +
+  geom_line(aes(n, `50_time`, color = "50")) +
+  geom_line(aes(n, `100_time`, color = "100")) +
+  geom_line(aes(n, `200_time`, color = "200")) +
+  geom_line(aes(n, `300_time`, color = "300")) +
+  geom_line(aes(n, `500_time`, color = "500")) +
+  geom_line(aes(n, `1000_time`, color = "1000")) +
+  geom_line(aes(n, `2000_time`, color = "2000")) +
+  geom_line(aes(n, `3000_time`, color = "3000")) +
+  geom_line(aes(n, `5000_time`, color = "5000")) +
+  geom_line(aes(n, `5000_time`, color = "10000")) +
+  labs(title = "Time to compute", x = "Number of observations", y = "Time in minutes") +
+  scale_color_manual(name = "Number of\nvarables", breaks = rev(c("10","20", "30", "50", "100", "200", "300", "500", "1000", "2000", "3000", "5000", "10000")),values = rev(c("10"=colour[1], "20"=colour[2], "30"=colour[3], "50"=colour[4], "100"=colour[5], "200"=colour[6], "300"=colour[7], "500"=colour[8], "1000"=colour[9], "2000"=colour[10], "3000"=colour[11], "5000"=colour[12], "10000"=colour[13])))
+```
+
+
+
+## Ploting functions
+
+```{r}
+#' Plots the accuracy of training set for model 
+#' 
+#' @param res_obj The object resulting from model test script
+#' @param colours The vector containing the hexadecimal color values. Must be of the same length as the number of dataset tested.
+#' Dafault will use \code{colorRampPalette(c("#1b98e0", "red"))((ncol(data)-1)/3)}.
+plot_acc_train = function(res_obj, colour = NULL, plot_FUN = geom_line){
+  data = res_to_df(res_obj)
+  
+  if(is.null(colour)){
+    colour = colorRampPalette(c("#1b98e0", "red"))((ncol(data)-1)/3)
+  }
+  
+  
+  
+  legend_label = as.character(c(1:(length(res_obj)-1))*10)#c("10","20")
+  
+  # Index that will run through legend_label in geom_line to attibute colour
+  idx = 2
+  
+  # Make dict of colours with apropriate labels
+  legend_colours = colour#c("10"=colour[1], "20"=colour[2])
+  names(legend_colours) = legend_label
+  
+  # Create plot and first line
+  out = ggplot2::ggplot(data, aes(n,`10_acc_train`, color = legend_label[1])) + plot_FUN()
+  
+  # Run through data names starting from 4th column step 3
+  for(i in names(data)[seq(4,(ncol(data)-1),3)]){
+    out + plot_FUN(aes(n, !!sym(i), color = legend_label[idx]))
+    idx = idx + 1
+  }
+  out = out + scale_color_manual(name = "Number of\nvarables", breaks = rev(legend_label), values = rev(legend_colours))
+  out = out + labs(title = "Training set accuracy", x = "Number of observations", y = "Accuracy in %")
+  return(out)
+}
+```
+
+```{r}
+plot_acc_train(out)
+```
+
+```{r}
+#' Plots the accuracy of training set for model 
+#' 
+#' @param res_obj The object resulting from model test script
+#' @param colours The vector containing the hexadecimal color values. Must be of the same length as the number of dataset tested.
+#' Dafault will use \code{colorRampPalette(c("#1b98e0", "red"))((ncol(data)-1)/3)}.
+plot_acc_test = function(res_obj, colour = NULL, plot_FUN = geom_line){
+  data = res_to_df(res_obj)
+  
+  if(is.null(colour)){
+    colour = colorRampPalette(c("#1b98e0", "red"))((ncol(data)-1)/3)
+  }
+  
+  
+  
+  legend_label = as.character(c(1:(length(res_obj)-1))*10)#c("10","20")
+  
+  # Index that will run through legend_label in geom_line to attibute colour
+  idx = 1
+  
+  # Make dict of colours with apropriate labels
+  legend_colours = colour#c("10"=colour[1], "20"=colour[2])
+  names(legend_colours) = legend_label
+  
+  # Create plot and first line
+  out = ggplot2::ggplot(data, aes(n,`10_acc_test`, color = legend_label[1])) + plot_FUN()
+  
+  # Run through data names starting from 4th column step 3
+  for(i in names(data)[seq(5,(ncol(data)-1),3)]){
+    out = out + plot_FUN(aes(n, !!sym(i), color = legend_label[idx]))
+    idx = idx + 1
+  }
+  out = out + scale_color_manual(name = "Number of\nvarables", breaks = rev(legend_label), values = rev(legend_colours))
+  out = out + labs(title = "Testing set accuracy", x = "Number of observations", y = "Accuracy in %")
+  return(out)
+}
+```
+
+```{r}
+plot_acc_test(out)
+```
+
+```{r}
+#' Plots the accuracy of training set for model 
+#' 
+#' @param res_obj The object resulting from model test script
+#' @param colours The vector containing the hexadecimal color values. Must be of the same length as the number of dataset tested.
+#' Dafault will use \code{colorRampPalette(c("#1b98e0", "red"))((ncol(data)-1)/3)}.
+plot_time = function(res_obj, colour = NULL, plot_FUN = geom_line){
+  data = res_to_df(res_obj)
+  
+  if(is.null(colour)){
+    colour = colorRampPalette(c("#1b98e0", "red"))(length(out)-1)
+  }
+  
+  
+  legend_label = names(res_obj)[-1]#as.character(c(1:(length(res_obj)-1))*10)#c("10","20")
+  
+  # Index that will run through legend_label in geom_line to attibute colour
+  idx = 2
+  
+  # Make dict of colours with apropriate labels
+  legend_colours = colour#c("10"=colour[1], "20"=colour[2])
+  names(legend_colours) = legend_label
+  
+  # Create plot and first line
+  out = ggplot2::ggplot(data, aes(n,`10_time`, color = legend_label[1])) + plot_FUN()
+  
+  # Run through data names starting from 4th column step 3
+  for(i in names(data)[seq(6,(ncol(data)-1),3)]){
+    out = out + plot_FUN(aes(n, !!sym(i), color = legend_label[idx]))
+    print(paste("idx: ", idx, ", colours: ", legend_label[idx], ", name: ", i))
+
+    idx = idx + 1
+  }
+  out = out + scale_color_manual(name = "Number of\nvarables", breaks = rev(legend_label), values = rev(legend_colours))
+  out = out + labs(title = "Time to compute", x = "Number of observations", y = "Time in seconds")
+  
+  print(paste("label: ",rev(legend_label)))
+  print(rev(legend_colours))
+  
+  return(out)
+}
+```
+
+```{r}
+plot_time(out)
+```
+
+
+## Model testing finction
+
+```{r}
+#' 
+#' 
+#' @param model_FUN The function of the model.
+#' @param model_param A list containg all the elements to pass to the model function call
+#' @param pred_FUN The function used to return the predictions. Must return a vector.
+#' @param pred_param The list of parameters to be used in the prediction function. Add the model and new data to the list and will be raplaced later.
+#' @param newas A vector of sample sizes to be tested.
+#' @param ... List of parameters to be passed to the predict function.
+test_model = function(model_FUN, model_param, newas, ...){
+  # Use this to pass parameters do.call(seq,list(from = 1, to = 10, by = 1)) 
+
+# Set random forest parameters
+set.seed(1)
+control = caret::trainControl(method='repeatedcv')#, number=3, repeats=3)
+#mtry = sqrt(ncol(train)-1)
+#tunegrid = expand.grid(.mtry=mtry)
+
+# Load test set
+test = readRDS("df_preproc_test.rds")
+
+# Set the number of n to test
+N = c(10, 20, 30, 50, seq(100, 1600, 100))
+
+# Final output
+out = list()
+# The N sequence to use as reference 
+out[["n"]] = N
+
+# Run through list of newas
+for(i in newas){
+  # Load training set
+  train = readRDS(paste0("df_newas", i, "_train.rds"))
+  
+  #rownames(out) = N
+  res_pred_train = c()
+  res_pred_test = c()
+  res_time = c()
+
+  # Run through all the N's
+  for(n in N){
+    print(n)
+    # Selecting sample
+    set.seed(1)
+    sample_train = train[sample(n),]
+    
+    # Seting parameters based on sample size
+    mtry = sqrt(ncol(sample_train)-1)
+    tunegrid = expand.grid(.mtry=mtry)
+    
+    # Run model
+    start_time = Sys.time()
+    model = do.call(model_FUN,model_param) 
+    end_time = Sys.time()
+    
+    # Predict values
+    pred_train = as.character(predict(model, newdata=train, ...))
+    pred_test = as.character(predict(model, newdata=test, ...))
+    
+    
+    # Putting all results in result vectors
+    temp = pred_train == train$meth_class
+    res_pred_train = c(res_pred_train, sum(temp)*100/length(temp))
+    
+    temp = pred_test == test$meth_class
+    res_pred_test = c(res_pred_test, sum(temp)*100/length(temp))
+    
+    res_time = c(res_time, difftime(end_time, start_time, units = "secs"))
+    
+  }
+  
+  
+  
+  # Put all results in list with newas as reference
+  out[[as.character(i)]] = list("acc_train" = res_pred_train, "acc_test" = res_pred_test, "time" = res_time)
+    
+  
+  
+  #saveRDS( ,paste0(c("Output/res_", newas)))
+}
+
+return(out)
+  
+}
+
+
+```
+
+```{r}
+
+
+result = test_model(model_FUN = caret::train, 
+                    model_param =  list(meth_class~., 
+              	                   data=sample_train, 
+                  	               method='rf', 
+                  	               metric='Accuracy', 
+                  	               tuneGrid=tunegrid, 
+                  	               trControl=control),
+                    newas = c(10, 20, 30, 50, 100, 200, 300, 500, 1000, 2000, 3000, 5000, 10000),
+                    nodes = TRUE
+                    )
+```
+
+
+
+```{r}
+df_key = readRDS("../Data/key_train.rds")
+```
+
+## Progress bar
+
+```{r}
+ bar = txtProgressBar(min = 0, max = 100, style = 3, width = 50)
+for(i in 1:100) {
+    Sys.sleep(0.1)
+    setTxtProgressBar(bar, i)
+    }
+close(pb)
+```
+
+```{r}
+colorRampPalette(c("#1b98e0", "red"))((7-1)/3) "#1B98E0" "#8D4C70" "#FF0000"
+```
+
